@@ -1,2 +1,2 @@
-mirror_dir = '/tmp'
+mirror_dir = '/data/mirror'
 

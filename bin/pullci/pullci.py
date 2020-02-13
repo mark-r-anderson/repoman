@@ -13,7 +13,7 @@ import config
 from repoman import tools
 from repoman.handlers.handler import Handler
 
-GLOBAL_SOCKET_TIMEOUT = 15
+GLOBAL_SOCKET_TIMEOUT = 30
 socket.setdefaulttimeout(GLOBAL_SOCKET_TIMEOUT)
 
 class PullRequestWatcher:
@@ -31,7 +31,10 @@ class PullRequestWatcher:
         self.repo = repo
         self.db_url = db_url
         self.handlers = handlers
-        self.params = {'access_token': oauth_token} if oauth_token else {}
+	self.oauth_token = oauth_token
+        self.headers = {}
+	self.headers['Authorization'] = 'token %s'%oauth_token
+        self.headers['User-agent'] = config.user_agent
 
     def run(self, interval=5):
         '''Poll the pulls at some interval, and apply handlers to incoming PRs.
@@ -53,9 +56,8 @@ class PullRequestWatcher:
         '''
         url = '/repos/%s/%s/pulls' % (self.user, self.repo)
         conn = httplib.HTTPSConnection('api.github.com')
-        headers = {'User-agent': config.user_agent}
         try:
-            req = conn.request('GET', url + '?' + urllib.urlencode(self.params), headers=headers)
+            req = conn.request('GET', url, headers=self.headers)
         except socket.error as e:
             print 'socket.error on request:', e
             return
@@ -72,6 +74,9 @@ class PullRequestWatcher:
         except httplib.BadStatusLine as e:
             print 'httplib.BadStatusLine on read:', e
             return
+        except httplib.IncompleteRead, e:
+            print 'httplib.IncompleteRead : ',e
+            data = e.partial
 
         if resp.status > 399:
             return
@@ -145,7 +150,7 @@ class PullRequestWatcher:
                 print 'Updating status for commit %s: %s (%s)' % (sha, status, reason)
 
                 url = config.results_base_url + sha
-                code, body = PullRequestWatcher.set_commit_status(config.user, self.repo, sha, status, reason, url, self.params['access_token'])
+                code, body = PullRequestWatcher.set_commit_status(config.user, self.repo, sha, status, reason, url, self.oauth_token)
 
                 if code >= 400:
                     print 'Error %i updating status on commit %s: %s' % (code, sha, body)
@@ -192,9 +197,8 @@ class PullRequestWatcher:
         '''
         url = '/repos/%s/%s/pulls' % (self.user, self.repo)
         conn = httplib.HTTPSConnection('api.github.com')
-        headers = {'User-agent': config.user_agent}
         try:
-            req = conn.request('GET', url + '?' + urllib.urlencode(self.params), headers=headers)
+            req = conn.request('GET', url, headers=self.headers)
         except socket.error as e:
             print 'Socket error:', e
             yield None, None, None, None
@@ -214,6 +218,7 @@ class PullRequestWatcher:
             yield None, None, None, None
             return
 
+        headers = {'User-agent':config.user_agent}
         for pr in payload:
             try:
                 # format appropriately for MergedPytuniaSubmitter
@@ -261,15 +266,14 @@ class PullRequestWatcher:
     def set_commit_status(user, repo, sha, status, description, target_url, oauth_token):
         url = '/repos/%s/%s/statuses/%s' % (user, repo, sha)
         conn = httplib.HTTPSConnection('api.github.com')
-        headers = {'User-agent': config.user_agent}
-        params = {'access_token': oauth_token}
+        headers = {'User-agent': config.user_agent, 'Authorization': 'token %s'%oauth_token}
         data = {
             'state': status,
             'target_url': target_url,
             'description': description
         }
         try:
-            req = conn.request('POST', url + '?' + urllib.urlencode(params), json.dumps(data), headers=headers)
+            req = conn.request('POST', url, json.dumps(data), headers=headers)
         except socket.error as e:
             print 'socket.error:', e
             return None, None
@@ -284,11 +288,11 @@ class MergedPytuniaSubmitter(Handler):
         self.results_base_url = results_base_url
         self.test_path = test_path
         self.oauth_token = oauth_token
+	self.headers = {'User-agent': config.user_agent,'Authorization': 'token %s'%self.oauth_token}	
 
     def handle(self, doc):
         docs = []
         sha = doc['sha']
-        headers = {'User-agent': config.user_agent}
 
         # record (revision) document
         record = {
@@ -375,14 +379,14 @@ class MergedPytuniaSubmitter(Handler):
         docs.append(charcheck)
 
         # get task names with github api
-        params = {'access_token': self.oauth_token} if self.oauth_token else {}
+        params = {}
         params['recursive'] = 1
 
         tree_base_url = '/repos/%s/git/trees/' % doc['full_name']
 
         conn = httplib.HTTPSConnection('api.github.com')
         try:
-            req = conn.request('GET', tree_base_url + sha + '?' + urllib.urlencode(params), headers=headers)
+            req = conn.request('GET', tree_base_url + sha + '?' + urllib.urlencode(params), headers=self.headers)
         except socket.error as e:
             print 'socket.error:', e
             return
@@ -422,6 +426,7 @@ class MergedPytuniaSubmitter(Handler):
             docs.append(task)
 
         # post documents to database
+        headers = {'User-agent':config.user_agent}
         docs_json = json.dumps({'docs': docs})
         conn, path, headers = tools.make_connection(self.db_url, headers=headers)
         try:
