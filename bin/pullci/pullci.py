@@ -163,7 +163,7 @@ class PullRequestWatcher:
                 except socket.error as e:
                     print 'socket.error:', e
                     return
-              
+
                 response = conn.getresponse()
                 payload = json.loads(response.read())
 
@@ -288,7 +288,7 @@ class MergedPytuniaSubmitter(Handler):
         self.results_base_url = results_base_url
         self.test_path = test_path
         self.oauth_token = oauth_token
-	self.headers = {'User-agent': config.user_agent,'Authorization': 'token %s'%self.oauth_token}	
+	self.headers = {'User-agent': config.user_agent,'Authorization': 'token %s'%self.oauth_token}
 
     def handle(self, doc):
         docs = []
@@ -378,6 +378,24 @@ class MergedPytuniaSubmitter(Handler):
 
         docs.append(charcheck)
 
+        # pylint task document
+        pylint = {
+            '_id': uuid.uuid4().get_hex(),
+            'type': 'task',
+            'name': 'pylint',
+            'created': time.time(),
+            'platform': 'linux',
+            'kwargs': {
+                'base_repo_url': doc['base_repo_url'],
+                'base_repo_ref': doc['base_repo_ref'],
+                'git_url' : doc['url'],
+                'sha': sha,
+            },
+            'record_id': sha
+        }
+
+        docs.append(pylint)
+
         # get task names with github api
         params = {}
         params['recursive'] = 1
@@ -462,4 +480,3 @@ if __name__ == '__main__':
     watcher = PullRequestWatcher(config.user, config.repo, config.db_url, [submitter], config.oauth_token)
 
     watcher.run()
-
